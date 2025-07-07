@@ -1,0 +1,216 @@
+name: PaiLieSan Data and Analysis
+
+on:
+  schedule:
+    # UTC时间每天 00:00，对应北京时间早上 8:00
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+# 授予GITHUB_TOKEN写权限
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  daily_process:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai # Set timezone for consistent date/time operations
+      PYTHONUNBUFFERED: 1 # 确保Python输出不被缓冲
+      WXPUSHER_APP_TOKEN: ${{ secrets.WXPUSHER_APP_TOKEN || 'AT_FInZJJ0mUU8xvQjKRP7v6omvuHN3Fdqw' }}
+      WXPUSHER_USER_UIDS: ${{ secrets.WXPUSHER_USER_UIDS || 'UID_yYObqdMVScIa66DGR2n2PCRFL10w' }}
+      WXPUSHER_TOPIC_IDS: ${{ secrets.WXPUSHER_TOPIC_IDS || '39909' }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Fetch all history for git operations
+        # token: ${{ secrets.PAT_FOR_CHECKOUT_AND_PUSH }} # Optional: If GITHUB_TOKEN has permission issues for subsequent pushes or certain repo setups. Usually GITHUB_TOKEN is fine.
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.9
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run data acquisition script
+      run: |
+        echo "=== 运行数据获取脚本 ==="
+        python pls_data_processor.py
+        echo "数据获取脚本执行完成，检查生成的文件："
+        ls -la *.csv || echo "未找到CSV文件"
+
+    - name: Run bonus calculation script
+      run: |
+        echo "=== 运行奖金计算脚本 ==="
+        python pls_bonus_calculation.py
+        echo "奖金计算脚本执行完成"
+      
+    - name: Run analysis script
+      run: |
+        echo "=== 运行分析脚本前的调试信息 ==="
+        echo "当前工作目录: $(pwd)"
+        echo "Python版本: $(python --version)"
+        echo "系统信息: $(uname -a)"
+        echo "内存使用: $(free -h)"
+        echo "磁盘使用: $(df -h .)"
+        echo "环境变量检查:"
+        echo "PYTHONUNBUFFERED=$PYTHONUNBUFFERED"
+        echo "CI=$CI"
+        echo "GITHUB_ACTIONS=$GITHUB_ACTIONS"
+        echo "WXPUSHER_APP_TOKEN=${WXPUSHER_APP_TOKEN:0:10}..."
+        echo "文件列表:"
+        ls -la
+        echo "检查数据文件:"
+        if [ -f "pls.csv" ]; then
+          echo "pls.csv 存在，大小: $(wc -l < pls.csv) 行"
+        else
+          echo "pls.csv 不存在"
+        fi
+        if [ -f "pls_processed.csv" ]; then
+          echo "pls_processed.csv 存在，大小: $(wc -l < pls_processed.csv) 行"
+        else
+          echo "pls_processed.csv 不存在"
+        fi
+        echo "=== 开始运行分析脚本 ==="
+        python -u pls_analyzer.py 2>&1 | tee analysis_output.log
+        echo "=== 分析脚本运行完成，退出码: $? ==="
+        echo "=== 检查生成的所有文件 ==="
+        ls -la
+        echo "=== 检查所有 .txt 文件 ==="
+        find . -name "*.txt" -type f -exec ls -la {} \; 2>/dev/null || echo "没有找到 .txt 文件"
+        echo "=== 检查 latest_pls_analysis.txt ==="
+        if [ -f "latest_pls_analysis.txt" ]; then
+          echo "latest_pls_analysis.txt 存在"
+          echo "文件大小: $(wc -c < latest_pls_analysis.txt) 字节"
+          echo "文件行数: $(wc -l < latest_pls_analysis.txt) 行"
+          echo "文件权限: $(ls -la latest_pls_analysis.txt)"
+          echo "文件前20行内容:"
+          head -20 latest_pls_analysis.txt
+          echo "文件后10行内容:"
+          tail -10 latest_pls_analysis.txt
+        else
+          echo "latest_pls_analysis.txt 不存在"
+        fi
+        echo "=== 检查分析日志文件 ==="
+        find . -name "pls_analysis_output_*.txt" -type f -exec ls -la {} \; 2>/dev/null || echo "没有找到分析日志文件"
+        echo "=== 检查运行时日志 ==="
+        if [ -f "analysis_output.log" ]; then
+          echo "运行时日志大小: $(wc -c < analysis_output.log) 字节"
+          echo "运行时日志最后50行:"
+          tail -50 analysis_output.log
+        fi
+
+    - name: Create fixed filename copy of latest analysis report
+      run: |
+        set -e
+        latest_report_file=$(find . -maxdepth 1 -name 'pls_analysis_output_*.txt' -print0 | xargs -0 ls -1 | sort -r | head -n 1)
+        if [ -n "$latest_report_file" ] && [ -f "$latest_report_file" ]; then
+          cp "$latest_report_file" "latest_pls_analysis.txt"
+          echo "Created fixed filename copy: latest_pls_analysis.txt from $latest_report_file"
+        else
+          echo "No pls_analysis_output_*.txt files found, or latest_report_file variable is empty. Skipping copy."
+        fi
+
+    - name: Clean old reports - keep only latest 3
+      run: |
+        set -e
+        echo "--- Cleaning old analysis reports ---"
+        mapfile -t reports < <(find . -maxdepth 1 -name 'pls_analysis_output_*.txt' -print0 | xargs -0 ls -1 | sort)
+        count=${#reports[@]}
+        keep=3
+        echo "Found $count reports. Configured to keep $keep latest."
+        if [ "$count" -gt "$keep" ]; then
+          num_to_delete=$((count - keep))
+          echo "Deleting $num_to_delete oldest reports:"
+          for i in $(seq 0 $((num_to_delete - 1))); do
+            report_to_delete="${reports[$i]}"
+            if [ -f "$report_to_delete" ]; then
+              echo "Removing: $report_to_delete"
+              rm "$report_to_delete"
+            else
+              echo "Skipping (not found): $report_to_delete"
+            fi
+          done
+        else
+          echo "No cleanup needed. $count report(s) found (≤ $keep)."
+        fi
+        echo "Listing remaining analysis reports:"
+        find . -maxdepth 1 -name 'pls_analysis_output_*.txt' | sort
+        echo "--- Finished cleaning reports ---"
+
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Commit updated files
+      run: |
+        set -e
+        echo "--- Staging and Committing Files ---"
+        git add -u
+        files_to_commit=(
+          "pls.csv"
+          "latest_pls_analysis.txt"
+          "latest_pls_calculation.txt"
+          "weights_config.json"
+        )
+        for file_path in "${files_to_commit[@]}"; do
+          if [ -f "$file_path" ]; then
+            git add "$file_path"
+            echo "Staged: $file_path"
+          else
+            echo "Skipping (not found): $file_path"
+          fi
+        done
+        find . -maxdepth 1 -name 'pls_analysis_output_*.txt' -print0 | xargs -0 -r git add
+        echo "Staged any new pls_analysis_output_*.txt files."
+        echo "Current git status:"
+        git status --porcelain
+        if git diff --staged --quiet; then
+          echo "No changes to commit."
+        else
+          git commit -m "Auto update: PaiLieSan Data and Analysis results $(date +'%Y-%m-%d %H:%M:%S %Z')"
+          echo "Changes committed."
+        fi
+        echo "--- Finished Staging and Committing ---"
+
+    - name: Pull remote changes to sync before push
+      run: |
+        echo "Current branch: $(git rev-parse --abbrev-ref HEAD)"
+        echo "Target branch from GITHUB_REF_NAME: ${{ github.ref_name }}"
+        # Set pull strategy to merge (default, but explicit) or rebase
+        # For automated processes, merge is often safer if conflicts are unlikely
+        # or if a merge commit is acceptable.
+        git config pull.rebase false # Use 'true' for rebase, 'false' for merge
+        
+        # Pull changes from the remote branch.
+        # This will attempt to merge remote changes. If there are conflicts
+        # that Git cannot auto-resolve, this step will fail, and the workflow will stop.
+        # Using --no-edit to avoid an editor opening for the merge commit message.
+        git pull origin ${{ github.ref_name }} --no-edit
+        echo "Successfully pulled and merged remote changes (if any)."
+      # Optional: Add retry logic or specific conflict handling if needed,
+      # but generally, failing on conflict is the safest default for CI.
+
+    - name: Push changes
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        # Use github.ref_name to get the short branch name (e.g., "main")
+        # This is generally more robust for git commands than the full github.ref (e.g., "refs/heads/main")
+        branch: ${{ github.ref_name }}
+        # force: false # Default. Do not force push unless you absolutely need to and understand the consequences.
