@@ -98,7 +98,7 @@ BACKTEST_PERIODS_COUNT = 100
 # 在优化模式下，每次试验用于快速评估性能的回测期数
 OPTIMIZATION_BACKTEST_PERIODS = 20
 # 在优化模式下，Optuna 进行参数搜索的总试验次数
-OPTIMIZATION_TRIALS = 30
+OPTIMIZATION_TRIALS = 10
 # 训练机器学习模型时，一个号码在历史数据中至少需要出现的次数
 MIN_POSITIVE_SAMPLES_FOR_ML = 25
 
