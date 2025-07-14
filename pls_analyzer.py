@@ -86,7 +86,7 @@ POSITION_NAMES = ['红球1', '红球2', '红球3']  # 保持与双色球命名�
 # --- 分析与执行参数配置 ---
 # --------------------------
 # 机器学习模型使用的滞后特征阶数 (e.g., 使用前1、3、5、10期的数据作为特征)
-ML_LAG_FEATURES = [1, 3, 5, 8,10]
+ML_LAG_FEATURES = [1, 3, 5,10]
 # 用于生成乘积交互特征的特征对
 ML_INTERACTION_PAIRS = [('sum_all', 'odd_count')]
 # 用于生成自身平方交互特征的特征
@@ -126,7 +126,7 @@ DEFAULT_WEIGHTS = {
     'COMBINATION_SUM_RANGE_MATCH_BONUS': 8.0,
 
     # --- 关联规则挖掘(ARM)参数与奖励 ---
-    'ARM_MIN_SUPPORT': 0.005,
+    'ARM_MIN_SUPPORT': 0.01,
     'ARM_MIN_CONFIDENCE': 0.40,
     'ARM_MIN_LIFT': 1.10,
     'ARM_COMBINATION_BONUS_WEIGHT': 15.0,
